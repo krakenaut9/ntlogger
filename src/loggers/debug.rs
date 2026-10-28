@@ -3,6 +3,7 @@ use crate::loggers::{
     dbgprint::{DbgPrintComponent, DbgPrintLevel},
 };
 use core::{
+    ffi::CStr,
     fmt::{self, Write},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -93,23 +94,26 @@ const FIRST_IRQL_ABOVE_DIRQL: u8 = 13;
 /// The size of the buffer `DbgPrintEx` formats each call into: it transmits at most this
 /// many bytes per call.
 const DBGPRINTEX_BUFFER_SIZE: usize = 512;
-/// The most a line may take. Windows does not document whether the buffer's last byte can
-/// hold text or is kept for the NUL that ends it, and the `ReactOS` implementation keeps it
-/// for the NUL. A line that lost its last byte would lose its newline and run the next
-/// record onto it, so that byte is left free.
+/// The most a printed line may take, its newline included. Windows does not document whether
+/// the buffer's last byte can hold text or is kept for the NUL that ends it, and the `ReactOS`
+/// implementation keeps it for the NUL. A line that lost its last byte would lose its newline
+/// and run the next record onto it, so that byte is left free.
 const LINE_CAPACITY: usize = DBGPRINTEX_BUFFER_SIZE - 1;
-/// Ends every line: `DbgPrintEx` adds no newline of its own.
+/// The newline [`FORMAT`] prints after every line, since `DbgPrintEx` adds none of its own.
 const NEWLINE: &str = "\n";
+/// The format `DbgPrintEx` prints a line with: the line, then the newline. The newline is part
+/// of the format so that it is printed even when `%.*s` stops early, at a NUL in the line.
+const FORMAT: &CStr = c"%.*s\n";
 /// Ends the text of a line that was cut.
 const CUT_MARKER: &str = "...";
 /// The room for text: what is left once the marker and the newline are set aside, so that
 /// both always fit after it.
 const TEXT_CAPACITY: usize = LINE_CAPACITY - CUT_MARKER.len() - NEWLINE.len();
 
-/// One line for `DbgPrintEx`. Text that does not fit is cut at a character boundary, and the
-/// line then ends with [`CUT_MARKER`].
+/// One line for `DbgPrintEx`, without the newline that [`FORMAT`] adds. Text that does not
+/// fit is cut at a character boundary, and the line then ends with [`CUT_MARKER`].
 struct Line {
-    text: String<LINE_CAPACITY>,
+    text: String<{ TEXT_CAPACITY + CUT_MARKER.len() }>,
     /// Whether the text was cut: where the next text did not fit, or where a value failed to
     /// format.
     cut: bool,
@@ -126,8 +130,8 @@ impl Line {
         }
     }
 
-    /// Writes the line for `entry` into this empty line: its text, the marker if the text was
-    /// cut, and the newline.
+    /// Writes the line for `entry` into this empty line: its text, and the marker if the text
+    /// was cut.
     fn write_entry(&mut self, entry: &Entry<'_>) {
         // Formatting stops at the first error: the one `write_str` returns when it cuts the
         // text, or one from a value that failed to format. Either way, the rest is missing.
@@ -135,11 +139,10 @@ impl Line {
             self.cut = true;
         }
 
-        // TEXT_CAPACITY leaves room for both, so neither push fails.
+        // TEXT_CAPACITY leaves room for the marker, so the push does not fail.
         if self.cut {
             let _ = self.text.push_str(CUT_MARKER);
         }
-        let _ = self.text.push_str(NEWLINE);
     }
 }
 
@@ -219,13 +222,13 @@ impl Sink for DebuggerLogger {
         line.write_entry(entry);
 
         let len = i32::try_from(line.text.len()).unwrap_or(i32::MAX);
-        // SAFETY: a literal format, so a `%` in the line is printed as is. `%.*s` reads `len`
-        // bytes from the line, which holds that many.
+        // SAFETY: `FORMAT` is a literal, so a `%` in the line is printed as is. Its `%.*s` reads
+        // at most `len` bytes from the line, which holds that many.
         unsafe {
             DbgPrintEx(
                 self.options.component.raw(),
                 self.options.dbgprint_level.raw(),
-                c"%.*s".as_ptr().cast(),
+                FORMAT.as_ptr().cast(),
                 len,
                 line.text.as_ptr(),
             );
@@ -282,13 +285,13 @@ mod tests {
 
     /// How long a line is before its message.
     fn prefix_len() -> usize {
-        line_for(format_args!("")).text.len() - NEWLINE.len()
+        line_for(format_args!("")).text.len()
     }
 
-    /// What every line must be: no longer than `LINE_CAPACITY`, and ending with the newline.
-    fn assert_well_formed(line: &Line) {
-        assert!(line.text.len() <= LINE_CAPACITY);
-        assert!(line.text.ends_with(NEWLINE));
+    /// What every line must do: fit in `LINE_CAPACITY` with the newline `FORMAT` adds, so that
+    /// `DbgPrintEx` prints it whole.
+    fn assert_fits(line: &Line) {
+        assert!(line.text.len() + NEWLINE.len() <= LINE_CAPACITY);
     }
 
     #[test]
@@ -344,64 +347,86 @@ mod tests {
     #[test]
     fn a_short_line_is_written_whole() {
         let line = line_for(format_args!("Test log message"));
+
         assert_eq!(
             line.text,
-            "1970-01-01 00:00:00.000000Z INFO  [1234|5678] [test_target] Test log message\n"
+            "1970-01-01 00:00:00.000000Z INFO  [1234|5678] [test_target] Test log message"
         );
         assert!(!line.cut);
     }
 
     #[test]
+    fn the_format_prints_the_line_then_the_newline() {
+        assert_eq!(
+            FORMAT.to_bytes().strip_suffix(NEWLINE.as_bytes()),
+            Some(b"%.*s".as_slice())
+        );
+    }
+
+    #[test]
     fn percent_signs_stay_as_they_are() {
         let line = line_for(format_args!("100% %s %n %ws"));
-        assert!(line.text.ends_with("[test_target] 100% %s %n %ws\n"));
+
+        assert!(line.text.ends_with("[test_target] 100% %s %n %ws"));
+    }
+
+    #[test]
+    fn a_nul_stays_as_it_is() {
+        // `DbgPrintEx` prints the line up to the NUL, then the newline of `FORMAT`, so the next
+        // record still starts a line of its own.
+        let line = line_for(format_args!("ab\0cd"));
+
+        assert!(!line.cut);
+        assert!(line.text.ends_with("[test_target] ab\0cd"));
     }
 
     #[test]
     fn a_line_that_fits_exactly_is_not_cut() {
         let line = line_for(format_args!("{}", xs(TEXT_CAPACITY - prefix_len())));
-        assert_well_formed(&line);
+
+        assert_fits(&line);
         assert!(!line.cut);
-        assert_eq!(line.text.len(), TEXT_CAPACITY + NEWLINE.len());
-        assert!(line.text.ends_with("x\n"));
+        assert_eq!(line.text.len(), TEXT_CAPACITY);
+        assert!(line.text.ends_with('x'));
     }
 
     #[test]
     fn one_byte_more_is_cut_and_marked() {
         let line = line_for(format_args!("{}", xs(TEXT_CAPACITY - prefix_len() + 1)));
-        assert_well_formed(&line);
+
+        assert_fits(&line);
         assert!(line.cut);
-        assert_eq!(line.text.len(), LINE_CAPACITY);
-        assert!(line.text.ends_with("x...\n"));
+        assert_eq!(line.text.len() + NEWLINE.len(), LINE_CAPACITY);
+        assert!(line.text.ends_with("x..."));
     }
 
     #[test]
     fn a_character_across_the_limit_is_not_split() {
         for character in ['é', '€', '😀'] {
             let width = character.len_utf8();
+
             // Too little room drops the character whole, however little is missing.
             for room in 1..width {
                 let line = line_for(format_args!(
                     "{}{character}",
                     xs(TEXT_CAPACITY - prefix_len() - room)
                 ));
-                assert_well_formed(&line);
+
+                assert_fits(&line);
                 assert!(line.cut);
-                assert_eq!(line.text.len(), LINE_CAPACITY - room);
-                assert!(line.text.ends_with("x...\n"));
+                assert_eq!(line.text.len() + NEWLINE.len(), LINE_CAPACITY - room);
+                assert!(line.text.ends_with("x..."));
             }
+
             // Just enough room keeps it.
             let line = line_for(format_args!(
                 "{}{character}",
                 xs(TEXT_CAPACITY - prefix_len() - width)
             ));
-            assert_well_formed(&line);
+
+            assert_fits(&line);
             assert!(!line.cut);
-            assert!(
-                line.text
-                    .strip_suffix(NEWLINE)
-                    .is_some_and(|text| text.ends_with(character))
-            );
+            assert!(line.text.ends_with(character));
         }
     }
 
@@ -427,9 +452,10 @@ mod tests {
     #[test]
     fn a_10_kb_message_makes_one_line() {
         let line = line_for(format_args!("{}", xs(10 * 1024)));
-        assert_well_formed(&line);
+
+        assert_fits(&line);
         assert!(line.cut);
-        assert!(line.text.ends_with("x...\n"));
+        assert!(line.text.ends_with("x..."));
     }
 
     #[test]
@@ -445,9 +471,10 @@ mod tests {
         }
 
         let line = line_for(format_args!("before {Fails} after"));
-        assert_well_formed(&line);
+
+        assert_fits(&line);
         assert!(line.cut);
-        assert!(line.text.ends_with("[test_target] before half...\n"));
+        assert!(line.text.ends_with("[test_target] before half..."));
     }
 
     #[test]
@@ -468,7 +495,8 @@ mod tests {
             xs(TEXT_CAPACITY - prefix_len() - 1),
             IgnoresErrors
         ));
-        assert_well_formed(&line);
-        assert!(line.text.ends_with("x...\n"));
+
+        assert_fits(&line);
+        assert!(line.text.ends_with("x..."));
     }
 }

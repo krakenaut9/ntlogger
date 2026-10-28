@@ -75,8 +75,9 @@ impl NtLoggerBuilder {
 
     /// Writes records to the kernel debugger, each as one line: the [`Entry`]'s text, then a
     /// newline. A line takes at most 511 bytes, which `DbgPrintEx` prints whole; a longer one
-    /// is cut at a character boundary and ends with `...`. A record logged above DIRQL, where
-    /// `DbgPrintEx` can deadlock, is counted instead of printed:
+    /// is cut at a character boundary and ends with `...`. Text that holds a NUL is printed
+    /// only up to the NUL, then the newline. A record logged above DIRQL, where `DbgPrintEx`
+    /// can deadlock, is counted instead of printed:
     /// [`NtLogger::debug_logger_skipped_above_dirql`] returns how many.
     ///
     /// Unless options were given with
