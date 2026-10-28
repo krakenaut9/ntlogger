@@ -26,18 +26,18 @@ mod irql {
     windows_link::link!("hal.dll" "system" fn KeGetCurrentIrql() -> u8);
 }
 
-// The logger that `log` calls. It stays empty until `KernelLogger::set_logger` moves a
+// The logger that `log` calls. It stays empty until `NtLogger::set_logger` moves a
 // logger in, which only the call that `log::set_logger` accepts does: `log` accepts one
 // logger only, so a second call changes nothing.
 static LOGGER: LoggerCell = LoggerCell::new();
 
-pub struct KernelLoggerBuilder {
+pub struct NtLoggerBuilder {
     log_level: LevelFilter,
     debug_logger: Option<DebugLoggerOptions>,
     sinks: &'static [&'static dyn Sink],
 }
 
-impl KernelLoggerBuilder {
+impl NtLoggerBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -47,7 +47,7 @@ impl KernelLoggerBuilder {
     /// set. A sink takes the records within it, or fewer with a level of its own
     /// ([`Sink::max_level`], [`DebugLoggerOptions::with_max_level`]), never more.
     ///
-    /// [`KernelLogger::set_logger`] gives this level to `log` with [`log::set_max_level`],
+    /// [`NtLogger::set_logger`] gives this level to `log` with [`log::set_max_level`],
     /// and from then on [`log::max_level`] is the logger's level. The `log` macros check it
     /// before they build a record, and the logger checks it again, for a record passed to
     /// `log::logger().log` directly. So `log::set_max_level` changes it while the driver
@@ -77,7 +77,7 @@ impl KernelLoggerBuilder {
     /// newline. A line takes at most 511 bytes, which `DbgPrintEx` prints whole; a longer one
     /// is cut at a character boundary and ends with `...`. A record logged above DIRQL, where
     /// `DbgPrintEx` can deadlock, is counted instead of printed:
-    /// [`KernelLogger::debug_logger_skipped_above_dirql`] returns how many.
+    /// [`NtLogger::debug_logger_skipped_above_dirql`] returns how many.
     ///
     /// Unless options were given with
     /// [`with_debug_logger_options`](Self::with_debug_logger_options), it uses the defaults:
@@ -94,18 +94,18 @@ impl KernelLoggerBuilder {
     /// [`with_debug_logger`](Self::with_debug_logger) does, with `options`.
     ///
     /// ```
-    /// use ntlogger::{DbgPrintComponent, DbgPrintLevel, DebugLoggerOptions, KernelLoggerBuilder};
+    /// use ntlogger::{DbgPrintComponent, DbgPrintLevel, DebugLoggerOptions, NtLoggerBuilder};
     ///
     /// // A network driver whose records are shown once the debugger enables INFO for its
     /// // component: `ed nt!Kd_IHVNETWORK_Mask 0x8`.
-    /// let logger = KernelLoggerBuilder::new()
+    /// let logger = NtLoggerBuilder::new()
     ///     .with_debug_logger_options(
     ///         DebugLoggerOptions::new()
     ///             .with_component(DbgPrintComponent::IHV_NETWORK)
     ///             .with_dbgprint_level(DbgPrintLevel::INFO),
     ///     )
     ///     .build();
-    /// // ...then `KernelLogger::set_logger(logger)`.
+    /// // ...then `NtLogger::set_logger(logger)`.
     /// ```
     #[must_use]
     pub fn with_debug_logger_options(mut self, options: DebugLoggerOptions) -> Self {
@@ -127,13 +127,13 @@ impl KernelLoggerBuilder {
     }
 
     #[must_use]
-    pub fn build(self) -> KernelLogger {
+    pub fn build(self) -> NtLogger {
         let Self {
             log_level,
             debug_logger,
             sinks,
         } = self;
-        KernelLogger {
+        NtLogger {
             log_level,
             debugger: debug_logger.map(DebuggerLogger::new),
             sinks,
@@ -141,7 +141,7 @@ impl KernelLoggerBuilder {
     }
 }
 
-impl Default for KernelLoggerBuilder {
+impl Default for NtLoggerBuilder {
     fn default() -> Self {
         Self {
             log_level: LevelFilter::Info,
@@ -151,7 +151,7 @@ impl Default for KernelLoggerBuilder {
     }
 }
 
-pub struct KernelLogger {
+pub struct NtLogger {
     /// The level `set_logger` gives `log`, which is the logger's level from then on.
     log_level: LevelFilter,
     /// The kernel debugger sink, if it is enabled.
@@ -160,9 +160,9 @@ pub struct KernelLogger {
     sinks: &'static [&'static dyn Sink],
 }
 
-impl KernelLogger {
+impl NtLogger {
     /// Installs `logger` as the logger the `log` macros write to, and sets `log`'s level to
-    /// the logger's ([`KernelLoggerBuilder::with_log_level`]), replacing any level set
+    /// the logger's ([`NtLoggerBuilder::with_log_level`]), replacing any level set
     /// before. From then on, `log::set_max_level` changes the logger's level.
     ///
     /// Only the first call installs a logger. A later one fails and changes nothing, so
@@ -219,9 +219,9 @@ impl KernelLogger {
 }
 
 // A logger built with the defaults: it has no sink, so it logs nothing.
-impl Default for KernelLogger {
+impl Default for NtLogger {
     fn default() -> Self {
-        KernelLoggerBuilder::new().build()
+        NtLoggerBuilder::new().build()
     }
 }
 
@@ -229,7 +229,7 @@ impl Default for KernelLogger {
 // it before calling them: code can also call `log::logger()` directly, skipping the macros,
 // and `log` leaves the filtering to the logger. For a record from the macros, the check
 // passes, and only rereads a value the macro has just read.
-impl Log for KernelLogger {
+impl Log for NtLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         self.sinks_taking(metadata.level(), log::max_level())
             .next()
@@ -278,7 +278,7 @@ struct LoggerCell {
     /// Set, with Release, once `logger` holds the installed logger; never cleared.
     ready: AtomicBool,
     /// Written once, by `install`, before `ready` is set.
-    logger: UnsafeCell<Option<KernelLogger>>,
+    logger: UnsafeCell<Option<NtLogger>>,
 }
 
 // SAFETY: `logger` is written only by `install`, once `log::set_logger` has accepted this
@@ -286,7 +286,7 @@ struct LoggerCell {
 // after seeing `ready` set, with Acquire. So that write happens before every read, and no
 // read overlaps it. After that, processors share the logger by reference, which the bound
 // keeps safe.
-unsafe impl Sync for LoggerCell where KernelLogger: Sync {}
+unsafe impl Sync for LoggerCell where NtLogger: Sync {}
 
 impl LoggerCell {
     const fn new() -> Self {
@@ -298,7 +298,7 @@ impl LoggerCell {
 
     /// Makes this cell `log`'s logger, then moves `logger` in. Fails, changing nothing, if
     /// `log` already has a logger: this cell or any other.
-    fn install(&'static self, logger: KernelLogger) -> Result<(), SetLoggerError> {
+    fn install(&'static self, logger: NtLogger) -> Result<(), SetLoggerError> {
         log::set_logger(self)?;
         // SAFETY: `log::set_logger` accepts one logger only, so no other call gets here,
         // and `ready` is still false, so nothing reads `logger` yet.
@@ -311,7 +311,7 @@ impl LoggerCell {
     }
 
     /// The installed logger, or `None` before `set_logger`.
-    fn get(&self) -> Option<&KernelLogger> {
+    fn get(&self) -> Option<&NtLogger> {
         if self.ready.load(Ordering::Acquire) {
             // SAFETY: `ready` is set after the only write to `logger`, and this Acquire load
             // pairs with that Release store, so the write is complete and visible here.
@@ -377,19 +377,19 @@ mod tests {
 
     #[test]
     fn the_level_is_info_unless_with_log_level_sets_another() {
-        let default = KernelLoggerBuilder::new().build();
-        let off = KernelLoggerBuilder::new()
+        let default = NtLoggerBuilder::new().build();
+        let off = NtLoggerBuilder::new()
             .with_log_level(LevelFilter::Off)
             .build();
 
         assert_eq!(default.log_level, LevelFilter::Info);
-        assert_eq!(KernelLogger::default().log_level, LevelFilter::Info);
+        assert_eq!(NtLogger::default().log_level, LevelFilter::Info);
         assert_eq!(off.log_level, LevelFilter::Off);
     }
 
     #[test]
     fn with_debug_logger_uses_the_default_options() {
-        let logger = KernelLoggerBuilder::new().with_debug_logger().build();
+        let logger = NtLoggerBuilder::new().with_debug_logger().build();
 
         assert_eq!(
             logger.debugger.as_ref().map(DebuggerLogger::options),
@@ -403,7 +403,7 @@ mod tests {
             .with_max_level(LevelFilter::Debug)
             .with_component(DbgPrintComponent::IHV_NETWORK)
             .with_dbgprint_level(DbgPrintLevel::INFO);
-        let logger = KernelLoggerBuilder::new()
+        let logger = NtLoggerBuilder::new()
             .with_debug_logger_options(options)
             .build();
 
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn with_debug_logger_keeps_the_options_given_before() {
         let options = DebugLoggerOptions::new().with_dbgprint_level(DbgPrintLevel::WARNING);
-        let logger = KernelLoggerBuilder::new()
+        let logger = NtLoggerBuilder::new()
             .with_debug_logger_options(options)
             .with_debug_logger()
             .build();
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn a_logger_without_sinks_logs_nothing() {
-        let logger = KernelLogger::default();
+        let logger = NtLogger::default();
 
         assert!(
             logger
@@ -445,7 +445,7 @@ mod tests {
         static NOTHING: Quiet = Quiet(LevelFilter::Off);
         static SINKS: [&dyn Sink; 3] = [&UP_TO_DEBUG, &EVERY, &NOTHING];
 
-        let logger = KernelLoggerBuilder::new()
+        let logger = NtLoggerBuilder::new()
             .with_debug_logger_options(DebugLoggerOptions::new().with_max_level(LevelFilter::Warn))
             .with_sinks(&SINKS)
             .build();
@@ -476,7 +476,7 @@ mod tests {
         static EVERY: Quiet = Quiet(LevelFilter::Trace);
         static SINKS: [&dyn Sink; 1] = [&EVERY];
 
-        let logger = KernelLoggerBuilder::new()
+        let logger = NtLoggerBuilder::new()
             .with_debug_logger()
             .with_sinks(&SINKS)
             .build();
@@ -509,7 +509,7 @@ mod tests {
         static FIRST_SINKS: [&dyn Sink; 1] = [&FIRST];
         static SECOND_SINKS: [&dyn Sink; 1] = [&SECOND];
 
-        let logger = KernelLoggerBuilder::new()
+        let logger = NtLoggerBuilder::new()
             .with_sinks(&FIRST_SINKS)
             .with_sinks(&SECOND_SINKS)
             .build();
@@ -522,7 +522,7 @@ mod tests {
         static SECOND: Flushes = Flushes(AtomicUsize::new(0));
         static SINKS: [&dyn Sink; 2] = [&FIRST, &SECOND];
 
-        let logger = KernelLoggerBuilder::new()
+        let logger = NtLoggerBuilder::new()
             .with_debug_logger()
             .with_sinks(&SINKS)
             .build();

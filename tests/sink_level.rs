@@ -5,12 +5,12 @@
 //! per process. It never logs, since that would run kernel functions.
 
 use log::{Level, LevelFilter, Metadata};
-use ntlogger::{DebugLoggerOptions, KernelLogger, KernelLoggerBuilder};
+use ntlogger::{DebugLoggerOptions, NtLogger, NtLoggerBuilder};
 
 #[test]
 fn the_debuggers_own_level_cannot_raise_the_loggers() {
-    KernelLogger::set_logger(
-        KernelLoggerBuilder::new()
+    NtLogger::set_logger(
+        NtLoggerBuilder::new()
             .with_debug_logger_options(DebugLoggerOptions::new().with_max_level(LevelFilter::Debug))
             .with_log_level(LevelFilter::Info)
             .build(),

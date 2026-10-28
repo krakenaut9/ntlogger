@@ -5,7 +5,7 @@
 //! per process. It never logs, since that would run kernel functions.
 
 use log::{Level, LevelFilter, Metadata};
-use ntlogger::{Entry, KernelLogger, KernelLoggerBuilder, Sink};
+use ntlogger::{Entry, NtLogger, NtLoggerBuilder, Sink};
 
 /// A sink that drops what it gets, with a level of its own.
 struct Quiet(LevelFilter);
@@ -23,7 +23,7 @@ static SINKS: [&dyn Sink; 1] = [&UP_TO_WARN];
 
 #[test]
 fn the_drivers_own_sinks_take_the_records_up_to_their_level() {
-    KernelLogger::set_logger(KernelLoggerBuilder::new().with_sinks(&SINKS).build()).unwrap();
+    NtLogger::set_logger(NtLoggerBuilder::new().with_sinks(&SINKS).build()).unwrap();
 
     // The logger's level, Info by default, lets an info record through; the sink's own
     // level stops it.

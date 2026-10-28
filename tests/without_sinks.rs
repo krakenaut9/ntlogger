@@ -5,12 +5,12 @@
 //! per process. It never logs, since that would run kernel functions.
 
 use log::{Level, LevelFilter, Metadata};
-use ntlogger::{KernelLogger, KernelLoggerBuilder};
+use ntlogger::{NtLogger, NtLoggerBuilder};
 
 #[test]
 fn a_logger_without_sinks_logs_nothing() {
-    KernelLogger::set_logger(
-        KernelLoggerBuilder::new()
+    NtLogger::set_logger(
+        NtLoggerBuilder::new()
             .with_log_level(LevelFilter::Trace)
             .build(),
     )

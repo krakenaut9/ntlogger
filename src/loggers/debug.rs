@@ -52,7 +52,7 @@ impl DebugLoggerOptions {
     }
 
     /// Takes only the records up to `level`, and never one above the logger's level
-    /// ([`KernelLoggerBuilder::with_log_level`](crate::KernelLoggerBuilder::with_log_level)),
+    /// ([`NtLoggerBuilder::with_log_level`](crate::NtLoggerBuilder::with_log_level)),
     /// whatever `level` is. With [`LevelFilter::Off`] it takes none.
     #[must_use]
     pub const fn with_max_level(mut self, level: LevelFilter) -> Self {

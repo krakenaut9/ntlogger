@@ -5,7 +5,7 @@
 //! per process. It never logs, since that would run kernel functions.
 
 use log::{Level, LevelFilter, Metadata};
-use ntlogger::{KernelLogger, KernelLoggerBuilder};
+use ntlogger::{NtLogger, NtLoggerBuilder};
 
 /// The metadata of a record at `level`.
 fn at(level: Level) -> Metadata<'static> {
@@ -14,7 +14,7 @@ fn at(level: Level) -> Metadata<'static> {
 
 #[test]
 fn log_set_max_level_changes_the_loggers_level() {
-    KernelLogger::set_logger(KernelLoggerBuilder::new().with_debug_logger().build()).unwrap();
+    NtLogger::set_logger(NtLoggerBuilder::new().with_debug_logger().build()).unwrap();
 
     // The default level.
     assert_eq!(log::max_level(), LevelFilter::Info);
