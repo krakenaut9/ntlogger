@@ -1,40 +1,34 @@
 use time::{Duration, OffsetDateTime};
 use windows_sys::Wdk::System::SystemServices::KeQuerySystemTimePrecise;
 
+/// How many 100-nanosecond intervals, the unit of system time, make a second.
 const HUNDRED_NS_PER_SECOND: i64 = 10_000_000;
 
-/// Difference between Windows epoch (1601-01-01)
-/// and Unix epoch (1970-01-01), in seconds.
+/// The seconds from 1601-01-01, where system time starts, to 1970-01-01, where Unix time
+/// starts.
 const WINDOWS_TO_UNIX_EPOCH_SECONDS: i64 = 11_644_473_600;
 
-#[cfg(test)]
-const WINDOWS_TO_UNIX_EPOCH_100NS: i64 = WINDOWS_TO_UNIX_EPOCH_SECONDS * HUNDRED_NS_PER_SECOND;
-
+/// The date and time of `windows_100ns`, a system time, in UTC. Fails for a time that `time`
+/// cannot hold: by default, one outside the years -9999 to 9999.
 fn windows_time_to_offset_datetime(
     windows_100ns: i64,
 ) -> Result<OffsetDateTime, time::error::ComponentRange> {
-    let secs = (windows_100ns / HUNDRED_NS_PER_SECOND) - WINDOWS_TO_UNIX_EPOCH_SECONDS;
+    let seconds = (windows_100ns / HUNDRED_NS_PER_SECOND) - WINDOWS_TO_UNIX_EPOCH_SECONDS;
+    let nanoseconds = (windows_100ns % HUNDRED_NS_PER_SECOND) * 100;
 
-    let nanos = (windows_100ns % HUNDRED_NS_PER_SECOND) * 100;
-
-    Ok(OffsetDateTime::from_unix_timestamp(secs)? + Duration::nanoseconds(nanos))
+    Ok(OffsetDateTime::from_unix_timestamp(seconds)? + Duration::nanoseconds(nanoseconds))
 }
 
-#[cfg(test)]
-pub(crate) fn offset_datetime_to_windows_time(offset_datetime: OffsetDateTime) -> Option<i64> {
-    let unix_100ns = offset_datetime.unix_timestamp_nanos().div_euclid(100);
-    let windows_100ns = unix_100ns + i128::from(WINDOWS_TO_UNIX_EPOCH_100NS);
-    i64::try_from(windows_100ns).ok()
-}
-
+/// The current system time: UTC, in 100-nanosecond intervals since 1601-01-01.
 #[inline]
 #[must_use]
 pub(crate) fn current_time() -> i64 {
-    let mut timestamp = 0;
-    // SAFETY: KeQuerySystemTimePrecise writes the time to `timestamp`, a valid i64, and may
+    let mut system_time = 0;
+    // SAFETY: KeQuerySystemTimePrecise writes the time to `system_time`, a valid i64, and may
     // be called at any IRQL.
-    unsafe { KeQuerySystemTimePrecise(&raw mut timestamp) };
-    timestamp
+    unsafe { KeQuerySystemTimePrecise(&raw mut system_time) };
+
+    system_time
 }
 
 /// The length of a timestamp: `2026-05-19 10:29:12.345678Z`.
@@ -108,7 +102,19 @@ mod tests {
     use core::fmt::Write;
     use heapless::String;
     use time::macros::datetime;
-    use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime};
+    use time::{Date, Month, PrimitiveDateTime};
+
+    /// 1970-01-01, where Unix time starts, in system time.
+    const WINDOWS_TO_UNIX_EPOCH_100NS: i64 = WINDOWS_TO_UNIX_EPOCH_SECONDS * HUNDRED_NS_PER_SECOND;
+
+    /// The system time of `time`, rounded down to whole 100-nanosecond intervals, or `None` if
+    /// it does not fit in an `i64`.
+    fn offset_datetime_to_windows_time(time: OffsetDateTime) -> Option<i64> {
+        let unix_100ns = time.unix_timestamp_nanos().div_euclid(100);
+        let windows_100ns = unix_100ns + i128::from(WINDOWS_TO_UNIX_EPOCH_100NS);
+
+        i64::try_from(windows_100ns).ok()
+    }
 
     /// The timestamp of `time`.
     fn timestamp_of(time: OffsetDateTime) -> Timestamp {
@@ -195,79 +201,59 @@ mod tests {
     }
 
     #[test]
-    fn windows_epoch_is_1601_01_01_utc() {
-        // Windows epoch: 1601-01-01 00:00:00Z corresponds to FILETIME tick 0.
-        let dt = super::windows_time_to_offset_datetime(0).unwrap();
-        assert_eq!(dt, datetime!(1601-01-01 0:00 UTC));
+    fn system_time_starts_at_1601_01_01_utc() {
+        let time = windows_time_to_offset_datetime(0).unwrap();
+
+        assert_eq!(time, datetime!(1601-01-01 0:00 UTC));
     }
 
     #[test]
-    fn unix_epoch_maps_to_known_windows_constant() {
-        // The delta between Windows epoch (1601) and Unix epoch (1970) is
-        // 116444736000000000 100ns ticks.
-        let windows_at_unix_epoch = WINDOWS_TO_UNIX_EPOCH_100NS;
+    fn the_unix_epoch_is_116_444_736_000_000_000_in_system_time() {
+        // What Microsoft's documentation adds to Unix time, in 100-nanosecond intervals, to
+        // make a FILETIME.
+        let unix_epoch = 116_444_736_000_000_000;
 
-        // Converting that Windows tick count must yield Unix epoch.
-        let dt = windows_time_to_offset_datetime(windows_at_unix_epoch).unwrap();
-        assert_eq!(dt, OffsetDateTime::UNIX_EPOCH);
-
-        // And converting Unix epoch back must return that tick count.
-        let back = offset_datetime_to_windows_time(OffsetDateTime::UNIX_EPOCH).unwrap();
-        assert_eq!(back, windows_at_unix_epoch);
+        assert_eq!(
+            windows_time_to_offset_datetime(unix_epoch).unwrap(),
+            OffsetDateTime::UNIX_EPOCH
+        );
+        assert_eq!(
+            offset_datetime_to_windows_time(OffsetDateTime::UNIX_EPOCH),
+            Some(unix_epoch)
+        );
     }
 
     #[test]
-    fn exact_fractional_tick_roundtrip_when_multiple_of_100ns() {
-        // Pick a nanoseconds value that's exactly divisible by 100 (100ns precision).
-        let nanos = 123_456_700i64; // divisible by 100
-        let dt = OffsetDateTime::UNIX_EPOCH + Duration::nanoseconds(nanos);
+    fn system_time_counts_100_ns_intervals() {
+        let ticks = WINDOWS_TO_UNIX_EPOCH_100NS + 1_234_567;
 
-        // Convert -> Windows ticks -> Convert back.
-        let w = offset_datetime_to_windows_time(dt).unwrap();
-        let dt2 = windows_time_to_offset_datetime(w).unwrap();
+        let time = windows_time_to_offset_datetime(ticks).unwrap();
 
-        // Should be exact: no precision lost because input aligns to 100ns.
-        assert_eq!(dt2, dt);
-
-        // Also check tick arithmetic: 123_456_700ns == 1_234_567 * 100ns ticks.
-        let expected = WINDOWS_TO_UNIX_EPOCH_100NS + nanos / 100;
-        assert_eq!(w, expected);
+        assert_eq!(
+            time,
+            OffsetDateTime::UNIX_EPOCH + Duration::nanoseconds(123_456_700)
+        );
     }
 
     #[test]
-    fn sub_100ns_precision_is_truncated_to_100ns() {
-        // Not divisible by 100ns: Windows time cannot represent 1ns granularity.
-        // Your forward conversion uses div_euclid(100), i.e. floors to 100ns ticks.
-        let nanos = 123_456_789i64; // not divisible by 100
-        let dt = OffsetDateTime::UNIX_EPOCH + Duration::nanoseconds(nanos);
-
-        let w = offset_datetime_to_windows_time(dt).unwrap();
-        let dt2 = windows_time_to_offset_datetime(w).unwrap();
-
-        // Expected loss: floor to nearest 100ns boundary (down).
-        let expected_nanos = nanos - (nanos.rem_euclid(100)); // 123_456_700
-        let expected_dt = OffsetDateTime::UNIX_EPOCH + Duration::nanoseconds(expected_nanos);
-
-        assert_eq!(dt2, expected_dt);
-        assert!(dt2 <= dt, "conversion should not round up");
-    }
-
-    #[test]
-    fn roundtrip_various_datetimes() {
-        let cases = [
+    fn times_from_1601_on_convert_back_exactly() {
+        // Each in whole 100-nanosecond intervals, the unit of system time.
+        for time in [
             datetime!(1601-01-01 0:00 UTC),
             datetime!(1700-01-01 12:34:56 UTC),
-            datetime!(1900-02-28 23:59:59.999999900 UTC), // aligned to 100ns
-            datetime!(1969-12-31 23:59:59.999999900 UTC), // just before Unix epoch, aligned
+            datetime!(1900-02-28 23:59:59.999999900 UTC),
+            datetime!(1969-12-31 23:59:59.999999900 UTC),
             datetime!(1970-01-01 0:00 UTC),
             datetime!(2000-01-01 0:00 UTC),
-            datetime!(2024-05-18 10:20:30.123456700 UTC), // aligned to 100ns
-        ];
+            datetime!(2024-05-18 10:20:30.123456700 UTC),
+        ] {
+            let ticks = offset_datetime_to_windows_time(time).unwrap();
 
-        for &dt in &cases {
-            let w = offset_datetime_to_windows_time(dt).unwrap();
-            let dt2 = windows_time_to_offset_datetime(w).unwrap();
-            assert_eq!(dt2, dt, "failed roundtrip for {dt:?}");
+            assert_eq!(
+                windows_time_to_offset_datetime(ticks).unwrap(),
+                time,
+                "{time:?}"
+            );
         }
     }
 }
