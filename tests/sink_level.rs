@@ -4,8 +4,8 @@
 //! A file of its own, so that it runs in a process of its own: `log` takes one logger
 //! per process. It never logs, since that would run kernel functions.
 
-use kernel_logger::kernel_logger::{DebugLoggerOptions, KernelLogger, KernelLoggerBuilder};
 use log::{Level, LevelFilter, Metadata};
+use ntlogger::{DebugLoggerOptions, KernelLogger, KernelLoggerBuilder};
 
 #[test]
 fn the_debuggers_own_level_cannot_raise_the_loggers() {

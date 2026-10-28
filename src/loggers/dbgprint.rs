@@ -95,7 +95,7 @@ impl DbgPrintLevel {
     /// shown apart from other drivers that print under the same component:
     ///
     /// ```
-    /// use kernel_logger::kernel_logger::DbgPrintLevel;
+    /// use ntlogger::DbgPrintLevel;
     ///
     /// // In a constant, a bit above 31 is a compile error.
     /// const MY_DRIVER: DbgPrintLevel = DbgPrintLevel::bit(4).unwrap();
@@ -115,7 +115,7 @@ impl DbgPrintLevel {
     /// mask has bit 31.
     ///
     /// ```
-    /// use kernel_logger::kernel_logger::DbgPrintLevel;
+    /// use ntlogger::DbgPrintLevel;
     ///
     /// // Shown once the component's mask has INFO (bit 3) or bit 4.
     /// const INFO_OR_MINE: DbgPrintLevel = DbgPrintLevel::mask(0x18).unwrap();

@@ -4,8 +4,8 @@
 //! A file of its own, so that it runs in a process of its own: `log` takes one logger
 //! per process. It never logs, since that would run kernel functions.
 
-use kernel_logger::kernel_logger::{Entry, KernelLogger, KernelLoggerBuilder, Sink};
 use log::{Level, LevelFilter, Metadata};
+use ntlogger::{Entry, KernelLogger, KernelLoggerBuilder, Sink};
 
 /// A sink that drops what it gets, with a level of its own.
 struct Quiet(LevelFilter);

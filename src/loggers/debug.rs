@@ -21,8 +21,8 @@ windows_link::link!("ntoskrnl.exe" "C" fn DbgPrintEx(componentid: u32, level: u3
 /// component's filter mask enables it; see [`DbgPrintLevel`].
 ///
 /// ```
-/// use kernel_logger::kernel_logger::{DbgPrintComponent, DbgPrintLevel, DebugLoggerOptions};
 /// use log::LevelFilter;
+/// use ntlogger::{DbgPrintComponent, DbgPrintLevel, DebugLoggerOptions};
 ///
 /// // A network driver, whose records are shown once the debugger enables INFO for its
 /// // component: `ed nt!Kd_IHVNETWORK_Mask 0x8`. It takes no trace records, even when the
@@ -52,7 +52,7 @@ impl DebugLoggerOptions {
     }
 
     /// Takes only the records up to `level`, and never one above the logger's level
-    /// ([`KernelLoggerBuilder::with_log_level`](crate::kernel_logger::KernelLoggerBuilder::with_log_level)),
+    /// ([`KernelLoggerBuilder::with_log_level`](crate::KernelLoggerBuilder::with_log_level)),
     /// whatever `level` is. With [`LevelFilter::Off`] it takes none.
     #[must_use]
     pub const fn with_max_level(mut self, level: LevelFilter) -> Self {

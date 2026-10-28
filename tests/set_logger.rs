@@ -3,8 +3,8 @@
 //! A file of its own, so that it runs in a process of its own: `log` takes one logger
 //! per process. It never logs, since that would run kernel functions.
 
-use kernel_logger::kernel_logger::{KernelLogger, KernelLoggerBuilder};
 use log::{Level, LevelFilter, Metadata};
+use ntlogger::{KernelLogger, KernelLoggerBuilder};
 
 fn logger_at(level: LevelFilter) -> KernelLogger {
     KernelLoggerBuilder::new()

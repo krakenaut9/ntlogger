@@ -9,9 +9,8 @@ use log::{Level, LevelFilter, Record};
 /// A destination for records.
 ///
 /// The kernel debugger is one, built in and enabled with
-/// [`with_debug_logger`](crate::kernel_logger::KernelLoggerBuilder::with_debug_logger). A
-/// driver gives sinks of its own to
-/// [`with_sinks`](crate::kernel_logger::KernelLoggerBuilder::with_sinks).
+/// [`with_debug_logger`](crate::KernelLoggerBuilder::with_debug_logger). A driver gives sinks
+/// of its own to [`with_sinks`](crate::KernelLoggerBuilder::with_sinks).
 ///
 /// The logger calls a sink where the record is logged: at any IRQL, in DPCs and ISRs, and
 /// on several processors at once. So a sink must not allocate, wait, touch pageable code or
@@ -21,8 +20,8 @@ use log::{Level, LevelFilter, Record};
 ///
 /// ```
 /// use core::sync::atomic::{AtomicUsize, Ordering};
-/// use kernel_logger::kernel_logger::{Entry, KernelLoggerBuilder, Sink};
 /// use log::LevelFilter;
+/// use ntlogger::{Entry, KernelLoggerBuilder, Sink};
 ///
 /// /// Counts the errors.
 /// struct ErrorCounter(AtomicUsize);
@@ -49,9 +48,9 @@ use log::{Level, LevelFilter, Record};
 pub trait Sink: Sync {
     /// The most verbose records this sink takes: [`LevelFilter::Trace`], the default, takes
     /// every record the logger's level
-    /// ([`with_log_level`](crate::kernel_logger::KernelLoggerBuilder::with_log_level)) lets
-    /// through, and [`LevelFilter::Off`] none. No sink takes a record above the logger's
-    /// level, whatever this returns.
+    /// ([`with_log_level`](crate::KernelLoggerBuilder::with_log_level)) lets through, and
+    /// [`LevelFilter::Off`] none. No sink takes a record above the logger's level, whatever
+    /// this returns.
     ///
     /// It is read for every record within the logger's level, so a sink may change it at any
     /// time.
