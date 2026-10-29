@@ -11,6 +11,10 @@ fn nothing_is_counted_before_a_record_is_skipped() {
     // No logger installed yet.
     assert_eq!(NtLogger::debug_logger_skipped_above_dirql(), 0);
 
-    NtLogger::set_logger(NtLoggerBuilder::new().with_debug_logger().build()).unwrap();
+    NtLoggerBuilder::new()
+        .with_debug_logger()
+        .build()
+        .init()
+        .unwrap();
     assert_eq!(NtLogger::debug_logger_skipped_above_dirql(), 0);
 }

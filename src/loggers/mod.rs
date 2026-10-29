@@ -18,7 +18,7 @@ use log::{Level, LevelFilter, Record};
 /// call it again. A sink that cannot work at every IRQL checks [`Entry::irql`] and skips
 /// what it cannot handle, as the kernel debugger sink does above DIRQL.
 ///
-/// ```
+/// ```no_run
 /// use core::sync::atomic::{AtomicUsize, Ordering};
 /// use log::LevelFilter;
 /// use ntlogger::{Entry, NtLoggerBuilder, Sink};
@@ -39,11 +39,12 @@ use log::{Level, LevelFilter, Record};
 /// static ERRORS: ErrorCounter = ErrorCounter(AtomicUsize::new(0));
 /// static SINKS: [&dyn Sink; 1] = [&ERRORS];
 ///
-/// let logger = NtLoggerBuilder::new()
+/// NtLoggerBuilder::new()
 ///     .with_debug_logger()
 ///     .with_sinks(&SINKS)
-///     .build();
-/// // ...then `NtLogger::set_logger(logger)`.
+///     .build()
+///     .init()?;
+/// # Ok::<(), log::SetLoggerError>(())
 /// ```
 pub trait Sink: Sync {
     /// The most verbose records this sink takes: [`LevelFilter::Trace`], the default, takes

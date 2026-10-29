@@ -26,9 +26,9 @@ mod irql {
     windows_link::link!("hal.dll" "system" fn KeGetCurrentIrql() -> u8);
 }
 
-// The logger that `log` calls. It stays empty until `NtLogger::set_logger` moves a
-// logger in, which only the call that `log::set_logger` accepts does: `log` accepts one
-// logger only, so a second call changes nothing.
+// The logger that `log` calls. It stays empty until `NtLogger::init` moves a logger in,
+// which only the call that `log::set_logger` accepts does: `log` accepts one logger only,
+// so a later call leaves it as it is.
 static LOGGER: LoggerCell = LoggerCell::new();
 
 pub struct NtLoggerBuilder {
@@ -47,7 +47,7 @@ impl NtLoggerBuilder {
     /// set. A sink takes the records within it, or fewer with a level of its own
     /// ([`Sink::max_level`], [`DebugLoggerOptions::with_max_level`]), never more.
     ///
-    /// [`NtLogger::set_logger`] gives this level to `log` with [`log::set_max_level`],
+    /// [`NtLogger::init`] gives this level to `log` with [`log::set_max_level`],
     /// and from then on [`log::max_level`] is the logger's level. The `log` macros check it
     /// before they build a record, and the logger checks it again, for a record passed to
     /// `log::logger().log` directly. So `log::set_max_level` changes it while the driver
@@ -95,19 +95,20 @@ impl NtLoggerBuilder {
     /// Writes records to the kernel debugger as
     /// [`with_debug_logger`](Self::with_debug_logger) does, with `options`.
     ///
-    /// ```
+    /// ```no_run
     /// use ntlogger::{DbgPrintComponent, DbgPrintLevel, DebugLoggerOptions, NtLoggerBuilder};
     ///
     /// // A network driver whose records are shown once the debugger enables INFO for its
     /// // component: `ed nt!Kd_IHVNETWORK_Mask 0x8`.
-    /// let logger = NtLoggerBuilder::new()
+    /// NtLoggerBuilder::new()
     ///     .with_debug_logger_options(
     ///         DebugLoggerOptions::new()
     ///             .with_component(DbgPrintComponent::IHV_NETWORK)
     ///             .with_dbgprint_level(DbgPrintLevel::INFO),
     ///     )
-    ///     .build();
-    /// // ...then `NtLogger::set_logger(logger)`.
+    ///     .build()
+    ///     .init()?;
+    /// # Ok::<(), log::SetLoggerError>(())
     /// ```
     #[must_use]
     pub fn with_debug_logger_options(mut self, options: DebugLoggerOptions) -> Self {
@@ -128,7 +129,9 @@ impl NtLoggerBuilder {
         self
     }
 
-    #[must_use]
+    /// Builds the logger. [`NtLogger::init`] installs it as the logger the `log` macros write
+    /// to; a driver can also nest it, as a [`Log`], in a logger of its own.
+    #[must_use = "a built logger does nothing until `init` installs it"]
     pub fn build(self) -> NtLogger {
         let Self {
             log_level,
@@ -153,8 +156,15 @@ impl Default for NtLoggerBuilder {
     }
 }
 
+/// The logger that [`NtLoggerBuilder::build`] makes. [`init`](Self::init) installs it as the
+/// logger the `log` macros write to; a driver can also nest it, as a [`Log`], in a logger of
+/// its own. A nested logger takes the records within `log`'s level, which the driver then
+/// sets itself with `log::set_max_level`: only `init` gives `log` the level set with
+/// [`with_log_level`](NtLoggerBuilder::with_log_level).
 pub struct NtLogger {
-    /// The level `set_logger` gives `log`, which is the logger's level from then on.
+    /// The level `init` gives `log`, which is the logger's level from then on. If `init`
+    /// fails, it filters the report of the failure instead: `log`'s level then belongs to
+    /// the logger installed before.
     log_level: LevelFilter,
     /// The kernel debugger sink, if it is enabled.
     debugger: Option<DebuggerLogger>,
@@ -163,20 +173,38 @@ pub struct NtLogger {
 }
 
 impl NtLogger {
-    /// Installs `logger` as the logger the `log` macros write to, and sets `log`'s level to
-    /// the logger's ([`NtLoggerBuilder::with_log_level`]), replacing any level set
-    /// before. From then on, `log::set_max_level` changes the logger's level.
+    /// Installs this logger as the logger the `log` macros write to, and sets `log`'s level
+    /// to the logger's ([`NtLoggerBuilder::with_log_level`]), replacing any level set before.
+    /// From then on, `log::set_max_level` changes the logger's level. A driver calls it once,
+    /// in `DriverEntry`:
     ///
-    /// Only the first call installs a logger. A later one fails and changes nothing, so
-    /// the logger in use and `log`'s level stay as they are.
+    /// ```no_run
+    /// use log::LevelFilter;
+    /// use ntlogger::NtLoggerBuilder;
+    ///
+    /// NtLoggerBuilder::new()
+    ///     .with_debug_logger()
+    ///     .with_log_level(LevelFilter::Info)
+    ///     .build()
+    ///     .init()?;
+    /// # Ok::<(), log::SetLoggerError>(())
+    /// ```
+    ///
+    /// Only the first call installs a logger. A later one fails, and the logger in use and
+    /// `log`'s level stay as they are. The logger it was called on is dropped, but first
+    /// reports the failure to its own sinks: an error record with the target `ntlogger`,
+    /// which each takes if its level and the logger's let errors through.
     ///
     /// # Errors
     ///
     /// If a logger is already installed, by an earlier call or by `log::set_logger`.
-    pub fn set_logger(logger: Self) -> Result<(), SetLoggerError> {
-        let log_level = logger.log_level;
+    pub fn init(self) -> Result<(), SetLoggerError> {
+        let log_level = self.log_level;
 
-        LOGGER.install(logger)?;
+        if let Err((error, logger)) = LOGGER.install(self) {
+            logger.report_not_installed();
+            return Err(error);
+        }
 
         log::set_max_level(log_level);
 
@@ -184,8 +212,8 @@ impl NtLogger {
     }
 
     /// How many records the kernel debugger sink has not printed because they were logged
-    /// above DIRQL, where `DbgPrintEx` can deadlock: 0 before [`set_logger`](Self::set_logger),
-    /// and if the logger in use has no debugger sink.
+    /// above DIRQL, where `DbgPrintEx` can deadlock: 0 before [`init`](Self::init) installs a
+    /// logger, and if that logger has no debugger sink.
     #[must_use]
     pub fn debug_logger_skipped_above_dirql() -> usize {
         LOGGER
@@ -206,8 +234,8 @@ impl NtLogger {
         built_in.chain(sinks.iter().copied())
     }
 
-    /// The sinks that take a record at `level` while `log`'s level, which is the logger's,
-    /// is `log_level`: none above it, and otherwise those whose own level takes it.
+    /// The sinks that take a record at `level` while the logger's level is `log_level`: none
+    /// above it, and otherwise those whose own level takes it.
     fn sinks_taking(
         &self,
         level: Level,
@@ -217,6 +245,52 @@ impl NtLogger {
 
         self.sinks()
             .filter(move |&sink| within_log_level && level <= sink.max_level())
+    }
+
+    /// Writes `record` to the sinks that take it while the logger's level is `log_level`.
+    fn write_record(&self, record: &Record<'_>, log_level: LevelFilter) {
+        let mut sinks = self.sinks_taking(record.level(), log_level).peekable();
+
+        // The IDs, the IRQL and the time are read only for a record that some sink takes.
+        if sinks.peek().is_none() {
+            return;
+        }
+
+        // SAFETY: none of these functions takes an argument, and each may be called at any
+        // IRQL.
+        let (process_id, thread_id, irql) = unsafe {
+            (
+                PsGetCurrentProcessId(),
+                PsGetCurrentThreadId(),
+                KeGetCurrentIrql(),
+            )
+        };
+        let entry = Entry::new(
+            record,
+            process_id.addr(),
+            thread_id.addr(),
+            irql,
+            current_time(),
+        );
+
+        for sink in sinks {
+            sink.write(&entry);
+        }
+    }
+
+    /// Tells the sinks that `init` could not install this logger. The logger's own level
+    /// filters the report, since `log`'s belongs to the logger installed before.
+    fn report_not_installed(&self) {
+        self.write_record(
+            &Record::builder()
+                .args(format_args!(
+                    "a logger is already installed, so this one is not used"
+                ))
+                .level(Level::Error)
+                .target("ntlogger")
+                .build(),
+            self.log_level,
+        );
     }
 }
 
@@ -239,33 +313,7 @@ impl Log for NtLogger {
     }
 
     fn log(&self, record: &Record) {
-        let mut sinks = self
-            .sinks_taking(record.level(), log::max_level())
-            .peekable();
-
-        // The IDs, the IRQL and the time are read only for a record that some sink takes.
-        if sinks.peek().is_none() {
-            return;
-        }
-        // SAFETY: none of these functions takes an argument, and each may be called at any
-        // IRQL.
-        let (process_id, thread_id, irql) = unsafe {
-            (
-                PsGetCurrentProcessId(),
-                PsGetCurrentThreadId(),
-                KeGetCurrentIrql(),
-            )
-        };
-        let entry = Entry::new(
-            record,
-            process_id.addr(),
-            thread_id.addr(),
-            irql,
-            current_time(),
-        );
-        for sink in sinks {
-            sink.write(&entry);
-        }
+        self.write_record(record, log::max_level());
     }
 
     fn flush(&self) {
@@ -298,10 +346,13 @@ impl LoggerCell {
         }
     }
 
-    /// Makes this cell `log`'s logger, then moves `logger` in. Fails, changing nothing, if
-    /// `log` already has a logger: this cell or any other.
-    fn install(&'static self, logger: NtLogger) -> Result<(), SetLoggerError> {
-        log::set_logger(self)?;
+    /// Makes this cell `log`'s logger, then moves `logger` in. If `log` already has a logger,
+    /// this cell or any other, it changes nothing and hands `logger` back with the error.
+    fn install(&'static self, logger: NtLogger) -> Result<(), (SetLoggerError, NtLogger)> {
+        if let Err(error) = log::set_logger(self) {
+            return Err((error, logger));
+        }
+
         // SAFETY: `log::set_logger` accepts one logger only, so no other call gets here,
         // and `ready` is still false, so nothing reads `logger` yet.
         unsafe {
@@ -309,10 +360,11 @@ impl LoggerCell {
         }
         // Release, after the logger is written: a record that sees `ready` sees the logger.
         self.ready.store(true, Ordering::Release);
+
         Ok(())
     }
 
-    /// The installed logger, or `None` before `set_logger`.
+    /// The installed logger, or `None` before `init`.
     fn get(&self) -> Option<&NtLogger> {
         if self.ready.load(Ordering::Acquire) {
             // SAFETY: `ready` is set after the only write to `logger`, and this Acquire load
