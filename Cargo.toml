@@ -3,8 +3,15 @@ name = "ntlogger"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+description = "Logger for Windows kernel-mode Rust drivers: writes log records to the kernel debugger and to sinks of the driver's own, without allocating."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/krakenaut9/ntlogger"
+documentation = "https://docs.rs/ntlogger"
+keywords = ["logging", "windows", "kernel", "driver", "wdk"]
+categories = ["no-std", "no-std::no-alloc", "os::windows-apis", "development-tools::debugging"]
+include = ["src/**", "tests/**", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE*"]
 authors = ["Dmytro Maslo <krakenaut9@gmail.com>"]
-description = "Logger for Windows kernel mode drivers"
 
 [dependencies]
 heapless = "0.9.1"
@@ -15,3 +22,20 @@ windows-sys = { version = "0.61", features = [ "Wdk", "Wdk_System", "Wdk_System_
 
 [dev-dependencies]
 time = { version = "0.3.6", default-features = false, features = [ "macros" ] }
+
+# Kept here, rather than on a command line, so that every `cargo clippy` checks the same
+# lints. Groups take priority -1 so that single lints can override them.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Every unsafe block says why it is sound.
+undocumented_unsafe_blocks = "warn"
+
+[lints.rust]
+# Every public type implements Debug, which a driver cannot add to a type of this crate.
+missing_debug_implementations = "warn"
+
+[package.metadata.docs.rs]
+# Windows only: docs.rs would otherwise also build Linux and macOS docs and open the crate
+# on Linux. The public API is the same on x86 and ARM64.
+targets = ["x86_64-pc-windows-msvc"]
