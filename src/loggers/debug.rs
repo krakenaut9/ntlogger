@@ -33,7 +33,7 @@ windows_link::link!("ntoskrnl.exe" "C" fn DbgPrintEx(componentid: u32, level: u3
 ///     .with_dbgprint_level(DbgPrintLevel::INFO)
 ///     .with_max_level(LevelFilter::Debug);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DebugLoggerOptions {
     max_level: LevelFilter,
     component: DbgPrintComponent,
@@ -172,6 +172,7 @@ impl Write for Line {
 }
 
 /// Writes records to the kernel debugger with `DbgPrintEx`.
+#[derive(Debug)]
 pub(crate) struct DebuggerLogger {
     options: DebugLoggerOptions,
     /// How many records it has not printed because they were logged above DIRQL.

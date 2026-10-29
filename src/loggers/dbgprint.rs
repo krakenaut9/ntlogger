@@ -22,7 +22,7 @@ const DPFLTR_MASK: u32 = 0x8000_0000;
 /// Each component has a filter mask of its own, named after it: `IHVNETWORK` in the
 /// registry and `Kd_IHVNETWORK_Mask` in the debugger. [`DbgPrintLevel`] says how a record's
 /// level is compared with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbgPrintComponent(u32);
 
 impl DbgPrintComponent {
@@ -75,7 +75,7 @@ impl DbgPrintComponent {
 /// ambiguity, and [`from_raw`](Self::from_raw) takes a value exactly as `DbgPrintEx` does.
 ///
 /// This is not `log`'s level, which decides which records are logged at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbgPrintLevel(u32);
 
 impl DbgPrintLevel {

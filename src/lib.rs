@@ -11,6 +11,7 @@ pub use crate::loggers::{
 use crate::{irql::KeGetCurrentIrql, loggers::debug::DebuggerLogger, time_util::current_time};
 use core::{
     cell::UnsafeCell,
+    fmt,
     sync::atomic::{AtomicBool, Ordering},
 };
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
@@ -31,6 +32,7 @@ mod irql {
 // so a later call leaves it as it is.
 static LOGGER: LoggerCell = LoggerCell::new();
 
+#[derive(Clone)]
 pub struct NtLoggerBuilder {
     log_level: LevelFilter,
     debug_logger: Option<DebugLoggerOptions>,
@@ -153,6 +155,23 @@ impl Default for NtLoggerBuilder {
             debug_logger: None,
             sinks: &[],
         }
+    }
+}
+
+impl fmt::Debug for NtLoggerBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Exhaustive, so that a setting added as a field cannot be left out here.
+        let Self {
+            log_level,
+            debug_logger,
+            sinks,
+        } = self;
+
+        f.debug_struct("NtLoggerBuilder")
+            .field("log_level", log_level)
+            .field("debug_logger", debug_logger)
+            .field("sinks", &SinksDebug(sinks))
+            .finish()
     }
 }
 
@@ -301,6 +320,38 @@ impl Default for NtLogger {
     }
 }
 
+impl fmt::Debug for NtLogger {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Exhaustive, so that a sink or setting added as a field cannot be left out here.
+        let Self {
+            log_level,
+            debugger,
+            sinks,
+        } = self;
+
+        f.debug_struct("NtLogger")
+            .field("log_level", log_level)
+            .field("debugger", debugger)
+            .field("sinks", &SinksDebug(sinks))
+            .finish()
+    }
+}
+
+/// The driver's own sinks as `Debug` shows them: one `<dyn Sink>` for each, since a sink need
+/// not implement `Debug`.
+struct SinksDebug<'a>(&'a [&'a dyn Sink]);
+
+impl fmt::Debug for SinksDebug<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut list = f.debug_list();
+        for _ in self.0 {
+            list.entry(&format_args!("<dyn Sink>"));
+        }
+
+        list.finish()
+    }
+}
+
 // Both methods check `log`'s level, which is the logger's, although the `log` macros check
 // it before calling them: code can also call `log::logger()` directly, skipping the macros,
 // and `log` leaves the filtering to the logger. For a record from the macros, the check
@@ -397,7 +448,7 @@ impl Log for LoggerCell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::{ptr, sync::atomic::AtomicUsize};
+    use core::{fmt::Write, hash::Hash, ptr, sync::atomic::AtomicUsize};
 
     /// A sink of the driver's own that drops what it gets, with a level of its own.
     struct Quiet(LevelFilter);
@@ -427,6 +478,14 @@ mod tests {
             .into_iter()
             .map(|sink| ptr::from_ref(sink).cast::<()>())
             .collect()
+    }
+
+    /// `value` as `{:?}` shows it.
+    fn debug_of(value: &impl fmt::Debug) -> heapless::String<512> {
+        let mut shown = heapless::String::new();
+        write!(shown, "{value:?}").unwrap();
+
+        shown
     }
 
     #[test]
@@ -584,5 +643,80 @@ mod tests {
 
         let flushes = [&FIRST, &SECOND].map(|sink| sink.0.load(Ordering::Relaxed));
         assert_eq!(flushes, [1, 1]);
+    }
+
+    #[test]
+    fn a_builder_shows_its_settings_and_a_placeholder_per_sink() {
+        static EVERY: Quiet = Quiet(LevelFilter::Trace);
+        static SINKS: [&dyn Sink; 2] = [&EVERY, &EVERY];
+
+        let builder = NtLoggerBuilder::new()
+            .with_log_level(LevelFilter::Warn)
+            .with_debug_logger()
+            .with_sinks(&SINKS);
+
+        let mut expected = heapless::String::<512>::new();
+        write!(
+            expected,
+            "NtLoggerBuilder {{ log_level: Warn, debug_logger: Some({:?}), sinks: [<dyn Sink>, <dyn Sink>] }}",
+            DebugLoggerOptions::new()
+        )
+        .unwrap();
+
+        assert_eq!(debug_of(&builder), expected);
+        assert_eq!(
+            debug_of(&NtLoggerBuilder::new()),
+            "NtLoggerBuilder { log_level: Info, debug_logger: None, sinks: [] }"
+        );
+    }
+
+    #[test]
+    fn a_logger_shows_its_debugger_sink_and_a_placeholder_per_sink() {
+        static EVERY: Quiet = Quiet(LevelFilter::Trace);
+        static SINKS: [&dyn Sink; 1] = [&EVERY];
+
+        let logger = NtLoggerBuilder::new()
+            .with_debug_logger()
+            .with_sinks(&SINKS)
+            .build();
+
+        let mut expected = heapless::String::<512>::new();
+        write!(
+            expected,
+            "NtLogger {{ log_level: Info, debugger: Some(DebuggerLogger {{ options: {:?}, skipped_above_dirql: 0 }}), sinks: [<dyn Sink>] }}",
+            DebugLoggerOptions::new()
+        )
+        .unwrap();
+
+        assert_eq!(debug_of(&logger), expected);
+    }
+
+    #[test]
+    fn a_cloned_builder_keeps_every_setting() {
+        static EVERY: Quiet = Quiet(LevelFilter::Trace);
+        static SINKS: [&dyn Sink; 1] = [&EVERY];
+
+        let builder = NtLoggerBuilder::new()
+            .with_log_level(LevelFilter::Debug)
+            .with_debug_logger_options(
+                DebugLoggerOptions::new().with_component(DbgPrintComponent::IHV_BUS),
+            )
+            .with_sinks(&SINKS);
+
+        let clone = builder.clone();
+
+        // `Debug` shows the level and the debugger's options, but the sinks only by number.
+        assert_eq!(debug_of(&clone), debug_of(&builder));
+        assert!(ptr::eq(clone.sinks, builder.sinks));
+    }
+
+    #[test]
+    fn the_options_can_be_hashed() {
+        // A driver may key a map with them, and only this crate can implement `Hash` for them.
+        fn hashable<T: Hash + Eq>() {}
+
+        hashable::<DbgPrintComponent>();
+        hashable::<DbgPrintLevel>();
+        hashable::<DebugLoggerOptions>();
     }
 }
