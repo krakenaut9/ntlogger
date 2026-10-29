@@ -1,5 +1,7 @@
 //! The two values `DbgPrintEx` filters records by: the component ID and the level.
 
+use core::fmt;
+
 /// Marks a `DbgPrintEx` level as bits rather than a bit number: `DPFLTR_MASK` in the
 /// WDK's `dpfilter.h`.
 const DPFLTR_MASK: u32 = 0x8000_0000;
@@ -22,7 +24,7 @@ const DPFLTR_MASK: u32 = 0x8000_0000;
 /// Each component has a filter mask of its own, named after it: `IHVNETWORK` in the
 /// registry and `Kd_IHVNETWORK_Mask` in the debugger. [`DbgPrintLevel`] says how a record's
 /// level is compared with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbgPrintComponent(u32);
 
 impl DbgPrintComponent {
@@ -53,6 +55,24 @@ impl DbgPrintComponent {
     }
 }
 
+impl fmt::Debug for DbgPrintComponent {
+    /// Shows the component as the expression that makes it, such as
+    /// `DbgPrintComponent::IHV_DRIVER`, so that its number need not be looked up.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match *self {
+            Self::IHV_DRIVER => "IHV_DRIVER",
+            Self::IHV_VIDEO => "IHV_VIDEO",
+            Self::IHV_AUDIO => "IHV_AUDIO",
+            Self::IHV_NETWORK => "IHV_NETWORK",
+            Self::IHV_STREAMING => "IHV_STREAMING",
+            Self::IHV_BUS => "IHV_BUS",
+            Self(id) => return write!(f, "DbgPrintComponent::from_raw({id})"),
+        };
+
+        write!(f, "DbgPrintComponent::{name}")
+    }
+}
+
 /// A `DbgPrintEx` level: the importance bits a record carries.
 ///
 /// A record is shown if one of its importance bits is also set in the filter mask of its
@@ -75,7 +95,7 @@ impl DbgPrintComponent {
 /// ambiguity, and [`from_raw`](Self::from_raw) takes a value exactly as `DbgPrintEx` does.
 ///
 /// This is not `log`'s level, which decides which records are logged at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbgPrintLevel(u32);
 
 impl DbgPrintLevel {
@@ -152,9 +172,121 @@ impl DbgPrintLevel {
     }
 }
 
+impl fmt::Debug for DbgPrintLevel {
+    /// Shows the level as the expression that makes it: a name, [`bit`](Self::bit) for the
+    /// other bit numbers, [`mask`](Self::mask) for bits with bit 31, and
+    /// [`from_raw`](Self::from_raw) for the bits that only it makes. So `mask(0x18)` shows
+    /// as `DbgPrintLevel::mask(0x18)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::ERROR => f.write_str("DbgPrintLevel::ERROR"),
+            Self::WARNING => f.write_str("DbgPrintLevel::WARNING"),
+            Self::TRACE => f.write_str("DbgPrintLevel::TRACE"),
+            Self::INFO => f.write_str("DbgPrintLevel::INFO"),
+            Self(bit @ 4..32) => write!(f, "DbgPrintLevel::bit({bit})"),
+            // mask(0) makes no level, but mask(DPFLTR_MASK) makes this one.
+            Self(DPFLTR_MASK) => write!(f, "DbgPrintLevel::mask({DPFLTR_MASK:#X})"),
+            Self(bits) if bits & DPFLTR_MASK != 0 => {
+                write!(f, "DbgPrintLevel::mask({:#X})", bits & !DPFLTR_MASK)
+            }
+            Self(bits) => write!(f, "DbgPrintLevel::from_raw({bits:#X})"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::fmt::Write;
+
+    /// `value` as `{:?}` shows it.
+    fn debug_of(value: &impl fmt::Debug) -> heapless::String<64> {
+        let mut shown = heapless::String::new();
+        write!(shown, "{value:?}").unwrap();
+
+        shown
+    }
+
+    #[test]
+    fn a_component_shows_as_the_expression_that_makes_it() {
+        let cases = [
+            (
+                DbgPrintComponent::IHV_DRIVER,
+                "DbgPrintComponent::IHV_DRIVER",
+            ),
+            (DbgPrintComponent::IHV_VIDEO, "DbgPrintComponent::IHV_VIDEO"),
+            (DbgPrintComponent::IHV_AUDIO, "DbgPrintComponent::IHV_AUDIO"),
+            (
+                DbgPrintComponent::IHV_NETWORK,
+                "DbgPrintComponent::IHV_NETWORK",
+            ),
+            (
+                DbgPrintComponent::IHV_STREAMING,
+                "DbgPrintComponent::IHV_STREAMING",
+            ),
+            (DbgPrintComponent::IHV_BUS, "DbgPrintComponent::IHV_BUS"),
+            // Either side of the named ones, and DPFLTR_SYSTEM_ID.
+            (
+                DbgPrintComponent::from_raw(76),
+                "DbgPrintComponent::from_raw(76)",
+            ),
+            (
+                DbgPrintComponent::from_raw(83),
+                "DbgPrintComponent::from_raw(83)",
+            ),
+            (
+                DbgPrintComponent::from_raw(0),
+                "DbgPrintComponent::from_raw(0)",
+            ),
+        ];
+
+        for (component, shown) in cases {
+            assert_eq!(debug_of(&component), shown);
+        }
+    }
+
+    #[test]
+    fn a_level_shows_as_the_expression_that_makes_it() {
+        let cases = [
+            (DbgPrintLevel::ERROR, "DbgPrintLevel::ERROR"),
+            (DbgPrintLevel::WARNING, "DbgPrintLevel::WARNING"),
+            (DbgPrintLevel::TRACE, "DbgPrintLevel::TRACE"),
+            (DbgPrintLevel::INFO, "DbgPrintLevel::INFO"),
+            // A bit with a name shows as the name.
+            (DbgPrintLevel::bit(3).unwrap(), "DbgPrintLevel::INFO"),
+            (DbgPrintLevel::bit(4).unwrap(), "DbgPrintLevel::bit(4)"),
+            (DbgPrintLevel::bit(31).unwrap(), "DbgPrintLevel::bit(31)"),
+            (
+                DbgPrintLevel::mask(0x18).unwrap(),
+                "DbgPrintLevel::mask(0x18)",
+            ),
+            (
+                DbgPrintLevel::mask(0x7FFF_FFFF).unwrap(),
+                "DbgPrintLevel::mask(0x7FFFFFFF)",
+            ),
+            // Bit 31 alone, which mask(0) cannot make.
+            (
+                DbgPrintLevel::mask(0x8000_0000).unwrap(),
+                "DbgPrintLevel::mask(0x80000000)",
+            ),
+            // Passed raw, 0x18 is bit number 24, and 0x8000_0018 is the mask above.
+            (DbgPrintLevel::from_raw(0x18), "DbgPrintLevel::bit(24)"),
+            (
+                DbgPrintLevel::from_raw(0x8000_0018),
+                "DbgPrintLevel::mask(0x18)",
+            ),
+            // Bits without bit 31, which only from_raw makes.
+            (DbgPrintLevel::from_raw(32), "DbgPrintLevel::from_raw(0x20)"),
+            (
+                DbgPrintLevel::from_raw(0x7FFF_FFFF),
+                "DbgPrintLevel::from_raw(0x7FFFFFFF)",
+            ),
+        ];
+
+        for (level, shown) in cases {
+            assert_eq!(debug_of(&level), shown, "{:#X}", level.raw());
+        }
+    }
 
     #[test]
     fn the_components_have_the_values_of_dpfilter_h() {
