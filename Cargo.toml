@@ -34,6 +34,8 @@ undocumented_unsafe_blocks = "warn"
 [lints.rust]
 # Every public type implements Debug, which a driver cannot add to a type of this crate.
 missing_debug_implementations = "warn"
+# Every public item is documented.
+missing_docs = "warn"
 
 [package.metadata.docs.rs]
 # Windows only: docs.rs would otherwise also build Linux and macOS docs and open the crate

@@ -24,6 +24,16 @@ const DPFLTR_MASK: u32 = 0x8000_0000;
 /// Each component has a filter mask of its own, named after it: `IHVNETWORK` in the
 /// registry and `Kd_IHVNETWORK_Mask` in the debugger. [`DbgPrintLevel`] says how a record's
 /// level is compared with it.
+///
+/// ```
+/// use ntlogger::{DbgPrintComponent, DebugLoggerOptions};
+///
+/// // A network driver's records, filtered by `Kd_IHVNETWORK_Mask`.
+/// let options = DebugLoggerOptions::new().with_component(DbgPrintComponent::IHV_NETWORK);
+///
+/// // The same component from its number, such as one read from the registry.
+/// assert_eq!(DbgPrintComponent::from_raw(80), DbgPrintComponent::IHV_NETWORK);
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbgPrintComponent(u32);
 
@@ -95,6 +105,15 @@ impl fmt::Debug for DbgPrintComponent {
 /// ambiguity, and [`from_raw`](Self::from_raw) takes a value exactly as `DbgPrintEx` does.
 ///
 /// This is not `log`'s level, which decides which records are logged at all.
+///
+/// ```
+/// use ntlogger::{DbgPrintLevel, DebugLoggerOptions};
+///
+/// // Shown once the component's mask has bit 3: `ed nt!Kd_IHVDRIVER_Mask 0x8`.
+/// let options = DebugLoggerOptions::new().with_dbgprint_level(DbgPrintLevel::INFO);
+///
+/// assert_eq!(DbgPrintLevel::INFO.importance_bits(), 0x8);
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbgPrintLevel(u32);
 

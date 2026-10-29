@@ -80,6 +80,27 @@ pub trait Sink: Sync {
 ///
 /// A time outside the years 0 to 9999 shows as `????-??-?? ??:??:??.??????Z`. In a DPC or an
 /// ISR, the IDs are those of the thread it interrupted.
+///
+/// A sink of the driver's own takes what it needs from the entry:
+///
+/// ```
+/// use core::sync::atomic::{AtomicU8, Ordering};
+/// use log::LevelFilter;
+/// use ntlogger::{Entry, Sink};
+///
+/// /// Remembers the IRQL of the last error.
+/// struct LastErrorIrql(AtomicU8);
+///
+/// impl Sink for LastErrorIrql {
+///     fn max_level(&self) -> LevelFilter {
+///         LevelFilter::Error
+///     }
+///
+///     fn write(&self, entry: &Entry<'_>) {
+///         self.0.store(entry.irql(), Ordering::Relaxed);
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Entry<'a> {
     record: &'a Record<'a>,

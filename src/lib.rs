@@ -1,4 +1,5 @@
 #![no_std]
+#![doc = include_str!("../README.md")]
 
 mod loggers;
 mod time_util;
@@ -32,6 +33,22 @@ mod irql {
 // so a later call leaves it as it is.
 static LOGGER: LoggerCell = LoggerCell::new();
 
+/// Sets up an [`NtLogger`]: the level it takes records up to, and the sinks it writes them
+/// to, the kernel debugger and sinks of the driver's own. [`build`](Self::build) makes the
+/// logger, and [`NtLogger::init`] installs it.
+///
+/// ```no_run
+/// use log::LevelFilter;
+/// use ntlogger::NtLoggerBuilder;
+///
+/// fn setup_logger() -> Result<(), log::SetLoggerError> {
+///     NtLoggerBuilder::new()
+///         .with_debug_logger()
+///         .with_log_level(LevelFilter::Info)
+///         .build()
+///         .init()
+/// }
+/// ```
 #[derive(Clone)]
 pub struct NtLoggerBuilder {
     log_level: LevelFilter,
@@ -40,6 +57,8 @@ pub struct NtLoggerBuilder {
 }
 
 impl NtLoggerBuilder {
+    /// A builder with the defaults: the level [`LevelFilter::Info`], and no sink. A logger
+    /// built without one logs nothing.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -87,6 +106,15 @@ impl NtLoggerBuilder {
     /// [`with_debug_logger_options`](Self::with_debug_logger_options), it uses the defaults:
     /// every record the logger's level lets through, [`DbgPrintComponent::IHV_DRIVER`] and
     /// [`DbgPrintLevel::ERROR`], which a kernel debugger always shows.
+    ///
+    /// ```no_run
+    /// use ntlogger::NtLoggerBuilder;
+    ///
+    /// // Every record from INFO up, shown whenever a kernel debugger is attached.
+    /// fn setup_logger() -> Result<(), log::SetLoggerError> {
+    ///     NtLoggerBuilder::new().with_debug_logger().build().init()
+    /// }
+    /// ```
     #[must_use]
     pub fn with_debug_logger(mut self) -> Self {
         self.debug_logger
@@ -123,8 +151,32 @@ impl NtLoggerBuilder {
     /// through, up to its own [`Sink::max_level`].
     ///
     /// The list can be as long as needed, and nothing is allocated: the logger keeps the
-    /// `'static` list itself, usually a `static` array, as in [`Sink`]'s example. A second
-    /// call replaces the list.
+    /// `'static` list itself, usually a `static` array. A second call replaces the list.
+    ///
+    /// ```no_run
+    /// use ntlogger::{Entry, NtLoggerBuilder, Sink};
+    ///
+    /// /// A sink that keeps nothing.
+    /// struct Discard;
+    ///
+    /// impl Sink for Discard {
+    ///     fn write(&self, _entry: &Entry<'_>) {}
+    /// }
+    ///
+    /// static FIRST: Discard = Discard;
+    /// static SECOND: Discard = Discard;
+    ///
+    /// // Written to in this order, after the kernel debugger.
+    /// static SINKS: [&dyn Sink; 2] = [&FIRST, &SECOND];
+    ///
+    /// fn setup_logger() -> Result<(), log::SetLoggerError> {
+    ///     NtLoggerBuilder::new()
+    ///         .with_debug_logger()
+    ///         .with_sinks(&SINKS)
+    ///         .build()
+    ///         .init()
+    /// }
+    /// ```
     #[must_use]
     pub fn with_sinks(mut self, sinks: &'static [&'static dyn Sink]) -> Self {
         self.sinks = sinks;
@@ -132,7 +184,35 @@ impl NtLoggerBuilder {
     }
 
     /// Builds the logger. [`NtLogger::init`] installs it as the logger the `log` macros write
-    /// to; a driver can also nest it, as a [`Log`], in a logger of its own.
+    /// to; a driver can also nest it, as a [`Log`], in a logger of its own:
+    ///
+    /// ```no_run
+    /// use log::{Log, Metadata, Record};
+    /// use ntlogger::{NtLogger, NtLoggerBuilder};
+    ///
+    /// /// A driver's own logger, which hands each record on to ntlogger's.
+    /// struct DriverLogger {
+    ///     nested: NtLogger,
+    /// }
+    ///
+    /// impl Log for DriverLogger {
+    ///     fn enabled(&self, metadata: &Metadata) -> bool {
+    ///         self.nested.enabled(metadata)
+    ///     }
+    ///
+    ///     fn log(&self, record: &Record) {
+    ///         self.nested.log(record);
+    ///     }
+    ///
+    ///     fn flush(&self) {
+    ///         self.nested.flush();
+    ///     }
+    /// }
+    ///
+    /// let logger = DriverLogger {
+    ///     nested: NtLoggerBuilder::new().with_debug_logger().build(),
+    /// };
+    /// ```
     #[must_use = "a built logger does nothing until `init` installs it"]
     pub fn build(self) -> NtLogger {
         let Self {
@@ -194,8 +274,8 @@ pub struct NtLogger {
 impl NtLogger {
     /// Installs this logger as the logger the `log` macros write to, and sets `log`'s level
     /// to the logger's ([`NtLoggerBuilder::with_log_level`]), replacing any level set before.
-    /// From then on, `log::set_max_level` changes the logger's level. A driver calls it once,
-    /// in `DriverEntry`:
+    /// From then on, `log::set_max_level` changes the logger's level. It works at any IRQL,
+    /// and a driver calls it once, in `DriverEntry`:
     ///
     /// ```no_run
     /// use log::LevelFilter;
@@ -233,6 +313,17 @@ impl NtLogger {
     /// How many records the kernel debugger sink has not printed because they were logged
     /// above DIRQL, where `DbgPrintEx` can deadlock: 0 before [`init`](Self::init) installs a
     /// logger, and if that logger has no debugger sink.
+    ///
+    /// It is an atomic read, so any IRQL will do, for example when the driver unloads:
+    ///
+    /// ```no_run
+    /// use ntlogger::NtLogger;
+    ///
+    /// let skipped = NtLogger::debug_logger_skipped_above_dirql();
+    /// if skipped > 0 {
+    ///     log::warn!("{skipped} records were logged above DIRQL and not printed");
+    /// }
+    /// ```
     #[must_use]
     pub fn debug_logger_skipped_above_dirql() -> usize {
         LOGGER
