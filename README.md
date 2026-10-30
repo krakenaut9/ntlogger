@@ -1,5 +1,6 @@
 # ntlogger
 
+[![CI](https://github.com/krakenaut9/ntlogger/actions/workflows/ci.yml/badge.svg)](https://github.com/krakenaut9/ntlogger/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/ntlogger.svg)](https://crates.io/crates/ntlogger)
 [![docs.rs](https://docs.rs/ntlogger/badge.svg)](https://docs.rs/ntlogger)
 [![MSRV](https://img.shields.io/badge/rustc-1.88+-blue.svg)](#minimum-supported-rust-version)
