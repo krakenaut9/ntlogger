@@ -94,10 +94,10 @@ const FIRST_IRQL_ABOVE_DIRQL: u8 = 13;
 /// The size of the buffer `DbgPrintEx` formats each call into: it transmits at most this
 /// many bytes per call.
 const DBGPRINTEX_BUFFER_SIZE: usize = 512;
-/// The most a printed line may take, its newline included. Windows does not document whether
-/// the buffer's last byte can hold text or is kept for the NUL that ends it, and the `ReactOS`
-/// implementation keeps it for the NUL. A line that lost its last byte would lose its newline
-/// and run the next record onto it, so that byte is left free.
+/// The most a printed line may take, its newline included: `DbgPrintEx` keeps the buffer's
+/// last byte for the NUL that ends the text. Windows does not document this. On Windows 11
+/// (kernel build 26100), 511 bytes of text and a newline printed as the first 510 and a
+/// newline, so a longer line would lose its end without a mark.
 const LINE_CAPACITY: usize = DBGPRINTEX_BUFFER_SIZE - 1;
 /// The newline [`FORMAT`] prints after every line, since `DbgPrintEx` adds none of its own.
 const NEWLINE: &str = "\n";
