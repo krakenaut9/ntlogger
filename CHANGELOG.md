@@ -9,6 +9,8 @@ While the version is below 1.0, a minor bump may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-08
+
 First public release.
 
 ### Added
@@ -56,4 +58,5 @@ First public release.
   no WDK.
 - Minimum supported Rust version is 1.88.
 
-[Unreleased]: https://github.com/krakenaut9/ntlogger/commits/HEAD
+[Unreleased]: https://github.com/krakenaut9/ntlogger/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/krakenaut9/ntlogger/releases/tag/v0.1.0
