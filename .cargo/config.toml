@@ -1,0 +1,14 @@
+# Test programs import kernel functions that they never call, and Windows loads every
+# imported file as a program starts. A 32-bit process finds no ntoskrnl.exe, and on the
+# ARM64 CI runner the files fail to load as well, so on x86 and ARM64 they are delay-loaded:
+# Windows would load them at the first call, which never comes. x64 keeps normal imports, so
+# its tests also check that the functions exist in ntoskrnl.exe. A RUSTFLAGS environment
+# variable replaces these flags.
+[target.'cfg(all(target_env = "msvc", any(target_arch = "x86", target_arch = "aarch64")))']
+rustflags = [
+    "-C", "link-arg=/DELAYLOAD:ntoskrnl.exe",
+    "-C", "link-arg=/DELAYLOAD:hal.dll",
+    "-C", "link-arg=delayimp.lib",
+    # The unit-test program imports neither file, which would give warning LNK4199.
+    "-C", "link-arg=/IGNORE:4199",
+]
